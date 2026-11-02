@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Camera Mouse</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#eaf0f3;--ink:#12212b;--muted:#5d6e7a;--panel:#fff;--line:#b9c7d0;--accent:#0b8a86;--dot:#e0452b;color-scheme:light dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f171c;--ink:#e7eff3;--muted:#8fa2ae;--panel:#18242b;--line:#2f424d;--accent:#4fd1c5;--dot:#ff7a5c}}
+:root[data-theme="dark"]{--bg:#0f171c;--ink:#e7eff3;--muted:#8fa2ae;--panel:#18242b;--line:#2f424d;--accent:#4fd1c5;--dot:#ff7a5c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;gap:14px;padding:16px;min-height:100vh}
+h1{font-size:1.2rem;margin:0;font-weight:700}
+p{margin:0;color:var(--muted);font-size:.9rem;text-align:center;max-width:32ch}
+#pad{position:relative;width:min(80vw,300px);aspect-ratio:1;background:var(--panel);border:2px solid var(--line);border-radius:50%;overflow:hidden}
+#pad::before,#pad::after{content:"";position:absolute;background:var(--line)}
+#pad::before{left:50%;top:0;bottom:0;width:1px}
+#pad::after{top:50%;left:0;right:0;height:1px}
+#zone{position:absolute;left:50%;top:50%;width:36%;height:36%;transform:translate(-50%,-50%);border:2px dashed var(--accent);border-radius:50%}
+#dot{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;background:var(--dot);border-radius:50%;box-shadow:0 0 0 4px color-mix(in srgb,var(--dot) 25%,transparent)}
+#dir{font-size:2.2rem;font-weight:800;min-height:2.6rem;letter-spacing:.02em}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center}
+button{font:inherit;font-weight:600;padding:12px 20px;border-radius:10px;border:0;background:var(--accent);color:#04201f;min-height:48px}
+button.alt{background:var(--panel);color:var(--ink);border:2px solid var(--line)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+label{font-size:.9rem;color:var(--muted);display:flex;gap:8px;align-items:center}
+video{width:120px;height:90px;object-fit:cover;border-radius:8px;background:#000;border:2px solid var(--line)}
+#msg{color:var(--dot);font-size:.9rem;min-height:1.2em;text-align:center;max-width:34ch}
+</style>
+</head>
+<body>
+<h1>Camera Mouse</h1>
+<p>Point the back camera at a textured surface, press Calibrate, then move the phone.</p>
+<div id="pad"><div id="zone"></div><div id="dot"></div></div>
+<div id="dir">Ready</div>
+<video id="v" playsinline muted></video>
+<div class="row">
+  <button id="start">Start camera</button>
+  <button id="cal" class="alt">Calibrate</button>
+</div>
+<label>Sensitivity <input id="sens" type="range" min="0.5" max="4" step="0.1" value="1.5"></label>
+<div id="msg"></div>
+<script>
+const W=80,H=60,R=6,LIM=50,DEAD=9;
+const v=document.getElementById('v'),dot=document.getElementById('dot'),dirEl=document.getElementById('dir'),msg=document.getElementById('msg'),pad=document.getElementById('pad');
+const c=document.createElement('canvas');c.width=W;c.height=H;
+const cx=c.getContext('2d',{willReadFrequently:true});
+let prev=null,px=0,py=0,on=false;
+
+function gray(){
+  cx.drawImage(v,0,0,W,H);
+  const d=cx.getImageData(0,0,W,H).data,g=new Uint8Array(W*H);
+  for(let i=0,j=0;i<d.length;i+=4,j++)g[j]=(d[i]*77+d[i+1]*150+d[i+2]*29)>>8;
+  return g;
+}
+// Find how far the picture moved between two frames (block matching).
+function shift(a,b){
+  let best=1e12,bx=0,by=0,zero=0;
+  for(let sy=-R;sy<=R;sy++)for(let sx=-R;sx<=R;sx++){
+    let s=0;
+    for(let y=R;y<H-R;y+=2){
+      const o=y*W,o2=(y+sy)*W+sx;
+      for(let x=R;x<W-R;x++){const d=b[o+x]-a[o2+x];s+=d<0?-d:d;}
+    }
+    if(sx===0&&sy===0)zero=s;
+    if(s<best){best=s;bx=sx;by=sy;}
+  }
+  if(zero-best<zero*0.04)return [0,0];
+  return [bx,by];
+}
+function loop(){
+  if(!on)return;
+  if(v.readyState>=2){
+    const g=gray();
+    if(prev){
+      const [sx,sy]=shift(prev,g),k=parseFloat(document.getElementById('sens').value);
+      px=Math.max(-LIM,Math.min(LIM,px+sx*k));
+      py=Math.max(-LIM,Math.min(LIM,py+sy*k));
+      draw();
+    }
+    prev=g;
+  }
+  requestAnimationFrame(loop);
+}
+function draw(){
+  const r=pad.clientWidth/2*0.85;
+  dot.style.transform=`translate(${px/LIM*r}px,${py/LIM*r}px)`;
+  const p=[];
+  if(py<-DEAD)p.push('UP');else if(py>DEAD)p.push('DOWN');
+  if(px<-DEAD)p.push('LEFT');else if(px>DEAD)p.push('RIGHT');
+  dirEl.textContent=p.length?p.join(' + '):'CENTER';
+}
+document.getElementById('start').onclick=async()=>{
+  msg.textContent='';
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:320},height:{ideal:240}},audio:false});
+    v.srcObject=s;await v.play();on=true;prev=null;px=py=0;loop();
+    document.getElementById('start').textContent='Camera on';
+  }catch(e){
+    msg.textContent='Camera blocked. Allow camera access for this page in your browser’s site settings, or open the page link directly in Chrome.';
+  }
+};
+document.getElementById('cal').onclick=()=>{px=py=0;prev=null;draw();};
+</script>
+</body>
+</html>
